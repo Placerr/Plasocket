@@ -4,14 +4,16 @@ a Server software for Placer 1.15.0.0 and up with Plugins support! have a fun ex
 
 ## Information About Plugins
 - MikuPI - **World Creator, more natural than original world creator. also with more world options to create**
-- AuthLib ( IT SUCKS IF YOU USE SUPERLOBBY OR MINIGAME PLUGINS )- **a Login/Register plugin like those that are in Minecraft servers**
+- AuthLib ( ITS USELESS IF YOU USE SUPERLOBBY OR MINIGAME PLUGINS )- **a Login/Register plugin like those that are in Minecraft servers**
 - CNPC - **NPC Creator, like Citizens plugin for Minecraft servers**
 - WorldLoader - **just loading the created worlds using commands "!load_world *worldname*"**
 - RainbowTime - **Rainbow blocks like those in SlimeFun**
 - GifPlayer - **Plays gifs through client side APIs for Image proccessing**
 - Zombies - **a Simple zombies minigame that you kill zombies and win**
 - SuperLobby - **a Lobby Plugin. teleporting to spawn point and so on**
-- ObjectRenderAPI/ORAPI ( crap✨ ) - **an API that was supposed to render Objects in client**
+- ObjectRenderAPI/ORAPI - **an API that is supposed to render Objects in client**
+- PingOptimizer - **a plugin that will make the server to brodcast less data to clients. such as playerdata. like it wont send duplicated playerdatas**
+- FreeForALL - **a simple minigame that you shoot people. and yes its not stable but it works**
 - SquidGame ( crap✨ ) - **Red light green light but non-functional**
 - Pet ( crap✨ ) - **a Pet plugin that was supposed to render pets as objects using ORAPI but it sucks and doesnt work at all**
 
