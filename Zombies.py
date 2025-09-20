@@ -7,6 +7,13 @@ import traceback
 import base64
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
+import importlib
+
+# --- Attempt to import ObjectRenderAPI ---
+try:
+    ObjectRenderAPI = importlib.import_module("ObjectRenderAPI")
+except ImportError:
+    ObjectRenderAPI = None
 
 # --- Plugin Configuration ---
 PLUGIN_FOLDER = "plugins/ZombiesGame"
@@ -47,6 +54,7 @@ font_scaled = None
 end_game_font = None
 scoreboard_font_title = None
 scoreboard_font_text = None
+object_render_api = None
 
 
 # --- Image Generation ---
@@ -65,11 +73,8 @@ async def generate_and_broadcast_hud(game_instance):
         total_zombies = game_instance.total_zombies_in_round
         
         if total_zombies > 0:
-            if len(game_instance.active_zombies) >= total_zombies:
-                 progress = 0.0
-            else:
-                zombies_defeated = total_zombies - zombies_left
-                progress = zombies_defeated / total_zombies
+            zombies_defeated = total_zombies - zombies_left
+            progress = zombies_defeated / total_zombies
         else:
             progress = 0.0
 
@@ -168,7 +173,6 @@ async def generate_end_game_image(game_instance, result_text, color):
 async def generate_scoreboard_image():
     """Generates a leaderboard image of the top 5 players, floating in a larger canvas."""
     try:
-        # Get and sort player data by wins, then kills, then games played
         sorted_players = sorted(
             player_stats.items(), 
             key=lambda item: (
@@ -180,14 +184,10 @@ async def generate_scoreboard_image():
         )
         top_5_players = sorted_players[:5]
 
-        # --- Canvas and Panel setup ---
         canvas_width, canvas_height = 854, 480
-        panel_width, panel_height = 600, 350 # Increased width for new column
-        
+        panel_width, panel_height = 600, 350
         panel_x = (canvas_width - panel_width) // 2
         panel_y = (canvas_height - panel_height) // 2
-
-        # Image and drawing setup
         bg_color = (20, 20, 30, 220)
         border_color = (80, 80, 100, 255)
         title_color = (255, 255, 255, 255)
@@ -200,13 +200,11 @@ async def generate_scoreboard_image():
         img = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Draw main panel
         draw.rounded_rectangle(
             (panel_x, panel_y, panel_x + panel_width, panel_y + panel_height), 
             fill=bg_color, radius=radius, outline=border_color, width=2
         )
 
-        # Title
         title_text = "Top Players"
         title_bbox = draw.textbbox((0,0), title_text, font=scoreboard_font_title)
         title_width = title_bbox[2] - title_bbox[0]
@@ -215,33 +213,27 @@ async def generate_scoreboard_image():
         draw.text((title_x + 2, title_y + 2), title_text, font=scoreboard_font_title, fill=shadow_color)
         draw.text((title_x, title_y), title_text, font=scoreboard_font_title, fill=title_color)
         
-        # Separator line
         draw.line(
             (panel_x + 20, panel_y + 70, panel_x + panel_width - 20, panel_y + 70), 
             fill=border_color, width=1
         )
 
-        # Draw table headers
         header_y = panel_y + 85
         col_x_relative = {'rank': 40, 'name': 90, 'played': 350, 'wins': 470, 'kills': 560}
         headers = {
-            "#": col_x_relative['rank'], 
-            "Player": col_x_relative['name'], 
-            "Played": col_x_relative['played'], 
-            "Wins": col_x_relative['wins'], 
-            "Kills": col_x_relative['kills']
+            "#": col_x_relative['rank'], "Player": col_x_relative['name'], "Played": col_x_relative['played'], 
+            "Wins": col_x_relative['wins'], "Kills": col_x_relative['kills']
         }
         
         for header, x_pos_rel in headers.items():
             x_pos_abs = panel_x + x_pos_rel
             bbox = draw.textbbox((0,0), header, font=scoreboard_font_text)
             header_width = bbox[2] - bbox[0]
-            if header in ["Played", "Wins", "Kills"]: # Right align
+            if header in ["Played", "Wins", "Kills"]:
                 draw.text((x_pos_abs - header_width, header_y), header, font=scoreboard_font_text, fill=header_color)
-            else: # Left align
+            else:
                 draw.text((x_pos_abs, header_y), header, font=scoreboard_font_text, fill=header_color)
 
-        # Draw player rows
         row_y_start = panel_y + 125
         line_height = 40
         
@@ -261,17 +253,14 @@ async def generate_scoreboard_image():
                 wins = str(stats.get("wins", 0))
                 kills = str(stats.get("kills", 0))
 
-                # Draw Rank & Name (left-aligned)
                 draw.text((panel_x + col_x_relative['rank'], y_pos), rank, font=scoreboard_font_text, fill=text_color)
                 draw.text((panel_x + col_x_relative['name'], y_pos), display_name, font=scoreboard_font_text, fill=value_color)
                 
-                # Draw stats (right-aligned)
                 for stat_val, col_key in [(played, 'played'), (wins, 'wins'), (kills, 'kills')]:
                     bbox = draw.textbbox((0,0), stat_val, font=scoreboard_font_text)
                     stat_width = bbox[2] - bbox[0]
                     draw.text((panel_x + col_x_relative[col_key] - stat_width, y_pos), stat_val, font=scoreboard_font_text, fill=text_color)
 
-        # Convert to data URL
         buffer = BytesIO()
         img.save(buffer, format="PNG")
         buffer.seek(0)
@@ -338,7 +327,6 @@ def load_font():
     sb_title_size = 30
     sb_text_size = 26
     try:
-        # Main HUD Font
         if os.path.exists(FONT_FILE):
             font = ImageFont.truetype(FONT_FILE, font_size)
             font_scaled = ImageFont.truetype(FONT_FILE, font_size * 2)
@@ -350,7 +338,6 @@ def load_font():
             scoreboard_font_title = ImageFont.truetype("arialbd.ttf", sb_title_size)
             scoreboard_font_text = ImageFont.truetype("arial.ttf", sb_text_size)
         
-        # End Game Font
         if os.path.exists(END_GAME_FONT_FILE):
              end_game_font = ImageFont.truetype(END_GAME_FONT_FILE, end_font_size)
         else:
@@ -382,11 +369,14 @@ class GameInstance:
         self.world_width = 120
         self.world_height = 80
         ground_y_tile = self.world_height // 2
-        ground_y_pixel_top = ground_y_tile * TILE_SIZE
-        self.ground_pixel_level = ground_y_pixel_top - (SKIN_HEIGHT // 2)
+        
+        self.ground_pixel_level = ground_y_tile * TILE_SIZE
+
         self.world_data_cache = {}
         self.game_loop_task = None
         self.countdown_task = None
+        self.next_damage_object_id = self.game_id * 1000 + 5000
+        self.next_splash_object_id = self.game_id * 1000 + 7000
 
     def generate_world(self, is_game_world=False):
         world_key = "game" if is_game_world else "lobby"
@@ -478,7 +468,6 @@ class GameInstance:
         self.in_game_players = self.lobby_players.copy()
         self.lobby_players.clear()
         
-        # Update Games Played stat for all players starting
         for username in self.in_game_players:
             update_player_stat(username, "games_played", 1)
         
@@ -508,8 +497,11 @@ class GameInstance:
                 for zid, zombie in list(self.active_zombies.items()):
                     if zombie["y"] < self.ground_pixel_level:
                         zombie["y"] += config["zombie_gravity"]
-                        if zombie["y"] > self.ground_pixel_level:
+                        if zombie["y"] >= self.ground_pixel_level:
                             zombie["y"] = self.ground_pixel_level
+                            if not zombie.get("has_landed", False):
+                                zombie["has_landed"] = True
+                                asyncio.create_task(self.show_landing_splash(zombie))
                     else:
                         zombie["y"] = self.ground_pixel_level
                         dx = self.core_position["x"] - zombie["x"]
@@ -540,9 +532,14 @@ class GameInstance:
                 if not self.in_game_players and self.game_state == "playing":
                     self.end_game(victory=False)
                     return
+
                 for zid, zombie in self.active_zombies.items():
                     skin = "Steve" if zombie.get("is_master", False) else "LAG"
-                    msg = f"{zombie['name']}|{int(zombie.get('x', -999))}|{int(zombie.get('y', -999))}|{skin}|{zid}|{zombie['hp']}|PLAYER_INFO"
+                    
+                    # --- THE FIX: Add exactly 40 to the final Y value, as requested ---
+                    y_for_render = zombie.get('y', -999) - (SKIN_HEIGHT / 2) + 40
+
+                    msg = f"{zombie['name']}|{int(zombie.get('x', -999))}|{int(y_for_render)}|{skin}|{zid}|{zombie['hp']}|PLAYER_INFO"
                     await self.broadcast_to_game_players(msg)
                 await asyncio.sleep(1/20)
             except asyncio.CancelledError: break
@@ -562,17 +559,19 @@ class GameInstance:
         
         await generate_and_broadcast_hud(self)
 
-
     async def spawn_zombie(self, hp, is_master=False):
         zid = self.next_zombie_id; self.next_zombie_id += 1
         spawn_side = random.choice([-1, 1])
-        spawn_offset = 5 + 4 + random.randint(0, 2)
+        spawn_offset = 5 + 4 + random.randint(0, 5) 
         spawn_tile_x = (self.world_width // 2) + (spawn_side * spawn_offset)
         zombie_name = f"Master Zombie-{zid}" if is_master else f"Zombie-{zid}"
+        
+        spawn_x_pos = (spawn_tile_x * TILE_SIZE) + (TILE_SIZE // 2) + random.randint(-TILE_SIZE, TILE_SIZE)
+        
         zombie_data = {
-            "name": zombie_name, "x": (spawn_tile_x * TILE_SIZE) + (TILE_SIZE // 2),
+            "name": zombie_name, "x": spawn_x_pos,
             "y": self.ground_pixel_level - (SKIN_HEIGHT * 2), "hp": hp, "is_master": is_master,
-            "last_hit_by": None
+            "last_hit_by": None, "has_landed": False
         }
         self.active_zombies[zid] = zombie_data
 
@@ -592,7 +591,6 @@ class GameInstance:
 
             if victory:
                 await generate_end_game_image(self, "VICTORY!", (255, 215, 0, 255))
-                # Update wins for all players still in the game
                 for username in self.in_game_players:
                     update_player_stat(username, "wins", 1)
             else:
@@ -627,6 +625,55 @@ class GameInstance:
             self.server_api.log(f"ZombiesGame (ID {self.game_id}): CRITICAL ERROR in _end_game_task: {e}")
             traceback.print_exc()
 
+    async def show_damage_indicator(self, zombie_data):
+        if not object_render_api: return
+        obj_id = self.next_damage_object_id
+        self.next_damage_object_id += 1
+        
+        start_x = int(zombie_data['x'])
+        zombie_center_y = int(zombie_data['y'] - SKIN_HEIGHT / 2)
+        
+        color_index = 1
+        width, height = 15, 15
+        
+        create_payload = f"{color_index}|{start_x}|{zombie_center_y}|{width}|{height}|{obj_id}"
+        await self.broadcast_to_game_players(f"OBJECT|PLACERSERVER|{create_payload}")
+        
+        try:
+            for i in range(10):
+                await asyncio.sleep(0.05)
+                current_y = zombie_center_y - (i * 5)
+                modify_payload = f"{color_index}|{start_x}|{current_y}|{width}|{height}|{obj_id}"
+                await self.broadcast_to_game_players(f"OBJECT_MODIFY|PLACERSERVER|{modify_payload}")
+        finally:
+            await asyncio.sleep(0.1)
+            await self.broadcast_to_game_players(f"OBJECT_DESTROY|PLACERSERVER|{obj_id}")
+
+    async def show_landing_splash(self, zombie_data):
+        if not object_render_api: return
+        obj_id = self.next_splash_object_id
+        self.next_splash_object_id += 1
+        
+        color_index = 0
+        
+        try:
+            for i in range(5):
+                width = 5 + i * 5
+                height = 2 + i * 2
+
+                x_pos = int(zombie_data['x']) 
+                y_pos = int(zombie_data['y'] - height / 2) 
+                
+                if i == 0:
+                    payload = f"{color_index}|{x_pos}|{y_pos}|{width}|{height}|{obj_id}"
+                    await self.broadcast_to_game_players(f"OBJECT|PLACERSERVER|{payload}")
+                else:
+                    payload = f"{color_index}|{x_pos}|{y_pos}|{width}|{height}|{obj_id}"
+                    await self.broadcast_to_game_players(f"OBJECT_MODIFY|PLACERSERVER|{payload}")
+                
+                await asyncio.sleep(0.06)
+        finally:
+            await self.broadcast_to_game_players(f"OBJECT_DESTROY|PLACERSERVER|{obj_id}")
 
     async def teleport_player(self, username, world_json, pixel_x, pixel_y):
         ws = self.server_api.get_websocket_from_username(username)
@@ -670,32 +717,24 @@ def rle_encode(grid, width, height):
 
 # --- Global Broadcast and Plugin Hooks ---
 async def minigame_broadcast_override(server_api, message, exclude_websocket=None):
-    """
-    This function intercepts all server broadcasts.
-    It directs messages to the correct scope: either the main world or a specific game instance.
-    """
     try:
         parts = message.split('|'); msg_type = parts[0]; sender_username = None
 
-        # --- Identify the sender of the message ---
         if msg_type == "PLAYER_INFO" or msg_type.endswith("PLAYER_INFO"):
             sender_username = parts[0]
-        elif msg_type == "PLAYER_MESSAGE": # BUG FIX: Correctly identify chat message sender
+        elif msg_type == "PLAYER_MESSAGE": 
             sender_username = parts[2]
         elif exclude_websocket:
             sender_username = server_api.get_username_from_websocket(exclude_websocket)
         
-        # --- Route the message ---
         sender_game_id = player_to_game.get(sender_username)
         if sender_game_id is not None:
-            # Sender is in a game, broadcast to their game instance
             game = active_games.get(sender_game_id)
             if game:
                 targets = [server_api.get_websocket_from_username(p) for p in game.players if server_api.get_websocket_from_username(p) != exclude_websocket]
                 if targets:
                     await asyncio.gather(*[ws.send(message) for ws in targets if ws], return_exceptions=True)
         else:
-            # Sender is in the main world, broadcast to other main world players
             main_world_websockets = [
                 ws for ws in server_api.get_connected_clients() 
                 if server_api.get_username_from_websocket(ws) not in player_to_game and ws != exclude_websocket
@@ -709,8 +748,6 @@ async def global_periodic_broadcast(server_api):
     global last_npc_name, last_scoreboard_npc_name
     while True:
         try:
-            # --- Main Join NPC ---
-            # BUG FIX: Count all players in any game instance, not just lobbies.
             total_players = sum(len(game.players) for game in active_games.values())
             npc_name = f"Zombies ({total_players} Players)"
             
@@ -727,7 +764,6 @@ async def global_periodic_broadcast(server_api):
                 if main_world_websockets:
                     await asyncio.gather(*[ws.send(msg) for ws in main_world_websockets], return_exceptions=True)
 
-            # --- Scoreboard NPC ---
             scoreboard_npc_name = "Zombies Stats"
             if scoreboard_npc_name != last_scoreboard_npc_name and last_scoreboard_npc_name:
                 despawn_msg = f"{last_scoreboard_npc_name}|-999|-999|Default|0|0|PLAYER_INFO"
@@ -740,13 +776,12 @@ async def global_periodic_broadcast(server_api):
                 if main_world_websockets:
                     await asyncio.gather(*[ws.send(msg) for ws in main_world_websockets], return_exceptions=True)
 
-
             await asyncio.sleep(1)
         except asyncio.CancelledError: break
         except Exception as e: server_api.log(f"ZombiesGame: Error in global broadcast: {e}")
 
 def on_load(server_api):
-    global global_broadcast_task
+    global global_broadcast_task, object_render_api
     server_api.log("ZombiesGame Plugin: Loading...")
     load_config()
     load_npc_location()
@@ -755,6 +790,19 @@ def on_load(server_api):
     load_font()
     if global_broadcast_task: global_broadcast_task.cancel()
     global_broadcast_task = asyncio.create_task(global_periodic_broadcast(server_api))
+    
+    try:
+        if ObjectRenderAPI and hasattr(ObjectRenderAPI, 'API_INSTANCE'):
+            object_render_api = ObjectRenderAPI.API_INSTANCE
+            if object_render_api:
+                server_api.log("ZombiesGame: Successfully connected to ObjectRenderAPI.")
+            else:
+                server_api.log("ZombiesGame: ObjectRenderAPI was imported but API_INSTANCE is not ready.")
+        else:
+            server_api.log("ZombiesGame: Could not find ObjectRenderAPI. Particle effects will be disabled.")
+    except Exception as e:
+        server_api.log(f"ZombiesGame: Error connecting to ObjectRenderAPI: {e}")
+
     server_api.log("ZombiesGame Plugin: Loaded successfully!")
 
 def on_unload(server_api):
@@ -766,17 +814,14 @@ def on_unload(server_api):
     server_api.log("ZombiesGame Plugin: Unloaded.")
 
 async def on_connect(websocket, server_api):
-    # Send join NPC info
     if npc_location:
         total_players = sum(len(game.players) for game in active_games.values())
         npc_name = f"Zombies ({total_players} Players)"
         msg = f"{npc_name}|{int(npc_location['x'])}|{int(npc_location['y'])}|{npc_location.get('skin', 'GameNPC')}|999|100|PLAYER_INFO"
         await server_api.send_to_client(websocket, msg)
-    # Send scoreboard NPC info
     if scoreboard_npc_location:
         msg = f"Zombies Stats|{int(scoreboard_npc_location['x'])}|{int(scoreboard_npc_location['y'])}|{scoreboard_npc_location.get('skin', 'GameNPC')}|998|100|PLAYER_INFO"
         await server_api.send_to_client(websocket, msg)
-
 
 async def on_message(websocket, message_string, message_parts, server_api):
     global player_locations, next_game_id, config
@@ -807,17 +852,17 @@ async def on_message(websocket, message_string, message_parts, server_api):
                 save_npc_location()
                 await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Zombies Game NPC spawned at your location.")
             else:
-                await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Your location is not yet known or you are in-game. Please move in the main world first.")
+                await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Your location is not yet known or you are in-game.")
             return True
 
-        if command == "!zombies_sb_npc": # NEW FEATURE
+        if command == "!zombies_sb_npc": 
             if username in player_locations and username not in player_to_game:
                 global scoreboard_npc_location
                 scoreboard_npc_location = {"x": player_locations[username]["x"], "y": player_locations[username]["y"], "skin": "GameNPC"}
                 save_scoreboard_npc_location()
                 await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Zombies scoreboard NPC spawned at your location.")
             else:
-                await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Your location is not yet known or you are in-game. Please move in the main world first.")
+                await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Your location is not yet known or you are in-game.")
             return True
 
         if command == "!set_lobby":
@@ -826,19 +871,16 @@ async def on_message(websocket, message_string, message_parts, server_api):
                 save_config()
                 await server_api.send_to_client(websocket, f"TELLRAW|PLACERSERVER|Main lobby location set to {config['lobby_location']['x']}, {config['lobby_location']['y']}.")
             else:
-                 await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Your location is not yet known or you are in-game. Please move in the main world first.")
+                 await server_api.send_to_client(websocket, "TELLRAW|PLACERSERVER|Your location is not yet known or you are in-game.")
             return True
 
-
-    # --- Player Actions (Damage) ---
     if len(message_parts) == 4 and message_parts[0] == "DAMAGE" and message_parts[1] == "PLACERCLIENT":
         target_name = message_parts[2]
         username = message_parts[3]
 
-        # Handle clicking the SCOREBOARD NPC
         if target_name.startswith("Zombies Stats"):
             async def show_and_hide_scoreboard():
-                image_data = await generate_scoreboard_image() # Changed: No longer needs username
+                image_data = await generate_scoreboard_image()
                 if image_data:
                     await server_api.send_to_client(websocket, f"SHOW_IMAGE|PLACERSERVER|{image_data}")
                     await asyncio.sleep(5)
@@ -846,7 +888,6 @@ async def on_message(websocket, message_string, message_parts, server_api):
             asyncio.create_task(show_and_hide_scoreboard())
             return True
 
-        # Handle clicking the JOIN NPC
         if target_name.startswith("Zombies"):
             if username in player_to_game: return True
             target_game = None
@@ -865,7 +906,6 @@ async def on_message(websocket, message_string, message_parts, server_api):
             await target_game.add_player(username)
             return True
         
-        # Handle damaging a ZOMBIE
         if target_name.startswith("Zombie-") or target_name.startswith("Master Zombie-"):
             if username in player_to_game:
                 game_id = player_to_game[username]
@@ -874,7 +914,8 @@ async def on_message(websocket, message_string, message_parts, server_api):
                     for zid, zdata in list(game.active_zombies.items()):
                         if zdata["name"] == target_name:
                             zdata["hp"] -= 10
-                            zdata["last_hit_by"] = username # Track who hit the zombie
+                            zdata["last_hit_by"] = username 
+                            asyncio.create_task(game.show_damage_indicator(zdata))
                             break
             return True
 
@@ -889,3 +930,4 @@ async def on_disconnect(websocket, server_api):
             await game.remove_player(username)
     if username and username in player_locations:
         del player_locations[username]
+
