@@ -24,6 +24,7 @@ class ObjectRenderAPI:
 
     def _get_caller_plugin_name(self):
         try:
+            # Go up 3 frames to find the original caller outside this API module
             caller_frame = inspect.stack()[3]
             filename = os.path.basename(caller_frame.filename)
             plugin_name, _ = os.path.splitext(filename)
@@ -44,6 +45,7 @@ class ObjectRenderAPI:
                 if targets and websockets:
                     tasks.extend([ws.send(message) for ws in websockets])
                 else:
+                    # If no specific targets, broadcast to everyone
                     tasks.append(self.server_api.broadcast(message))
             
             if tasks: await asyncio.gather(*tasks)
@@ -54,11 +56,11 @@ class ObjectRenderAPI:
         plugin_name = self._get_caller_plugin_name()
         await self.__clear_internal(username, plugin_name, targets)
 
-    async def render_object_from_file(self, username: str, object_name: str, targets: list = None):
-        plugin_name = self._get_caller_plugin_name()
+    async def _render_object(self, username: str, plugin_name: str, model_data: dict, targets: list = None):
+        """Core rendering logic that takes model data as a dictionary."""
         if username not in player_locations: return
         player_state = player_locations.get(username, {});
-        if not player_state: return
+        if not player_state or not model_data: return
 
         base_pos = {"x": player_state["x"], "y": player_state["y"]}
         direction = player_state.get("direction", 0)
@@ -69,8 +71,81 @@ class ObjectRenderAPI:
         last_state = self.last_rendered_states.get(username, {}).get(plugin_name)
         
         if is_update and last_state and last_state == current_state:
-            return
+            return # No change in player state, no need to re-render
 
+        pixels = model_data.get("pixels", [])
+        grid_height = model_data.get("grid_height", 16)
+        grid_width = model_data.get("grid_width", 16)
+        default_pixel_size = model_data.get("default_pixel_size", PIXEL_SIZE)
+        if not pixels: return
+
+        websockets = [self.server_api.get_websocket_from_username(t) for t in targets or [] if self.server_api.get_websocket_from_username(t)]
+
+        if is_update:
+            existing_objects = self.rendered_objects[username][plugin_name]
+            tasks = []
+            for i, pixel in enumerate(pixels):
+                if i >= len(existing_objects): break # Safety check
+                obj_id = existing_objects[i]['id']
+                
+                pixel_grid_x = pixel['x']
+                if direction == 1:
+                    pixel_grid_x = (grid_width - 1) - pixel_grid_x
+
+                p_width = pixel.get('width', default_pixel_size)
+                p_height = pixel.get('height', default_pixel_size)
+                p_top = pixel.get('top', 0)
+                p_left = pixel.get('left', 0)
+
+                world_x = base_pos['x'] + (pixel_grid_x * PIXEL_SIZE) + p_left
+                world_y = (base_pos['y'] - grid_height * PIXEL_SIZE) + (pixel['y'] * PIXEL_SIZE) + p_top
+                
+                payload = f"{pixel['color_index']}|{int(world_x)}|{int(world_y)}|{int(p_width)}|{int(p_height)}|{obj_id}"
+                message = f"OBJECT_MODIFY|PLACERSERVER|{payload}"
+                if targets and websockets:
+                    tasks.extend([ws.send(message) for ws in websockets])
+                else:
+                    tasks.append(self.server_api.broadcast(message))
+            if tasks: await asyncio.gather(*tasks)
+        else: # Create new objects
+            await self.__clear_internal(username, plugin_name, targets)
+            rendered_objects_list = []
+            create_tasks = []
+            for pixel in pixels:
+                obj_id = self.next_object_id; self.next_object_id += 1
+                
+                pixel_grid_x = pixel['x']
+                if direction == 1:
+                    pixel_grid_x = (grid_width - 1) - pixel_grid_x
+                
+                p_width = pixel.get('width', default_pixel_size)
+                p_height = pixel.get('height', default_pixel_size)
+                p_top = pixel.get('top', 0)
+                p_left = pixel.get('left', 0)
+
+                world_x = base_pos['x'] + (pixel_grid_x * PIXEL_SIZE) + p_left
+                world_y = (base_pos['y'] - grid_height * PIXEL_SIZE) + (pixel['y'] * PIXEL_SIZE) + p_top
+
+                payload = f"{pixel['color_index']}|{int(world_x)}|{int(world_y)}|{int(p_width)}|{int(p_height)}|{obj_id}"
+                message = f"OBJECT|PLACERSERVER|{payload}"
+                if targets and websockets:
+                    create_tasks.extend([ws.send(message) for ws in websockets])
+                else:
+                    create_tasks.append(self.server_api.broadcast(message))
+                rendered_objects_list.append({'id': obj_id})
+            
+            if create_tasks: await asyncio.gather(*create_tasks)
+            
+            if username not in self.rendered_objects: self.rendered_objects[username] = {}
+            self.rendered_objects[username][plugin_name] = rendered_objects_list
+
+        if username not in self.last_rendered_states: self.last_rendered_states[username] = {}
+        self.last_rendered_states[username][plugin_name] = current_state
+
+    async def render_object_from_file(self, username: str, object_name: str, targets: list = None):
+        """Loads a model from a .json file and renders it attached to a player."""
+        plugin_name = self._get_caller_plugin_name()
+        
         if object_name not in self.models_cache:
             file_path = os.path.join(DATA_FOLDER, f"{object_name}.json")
             if not os.path.exists(file_path):
@@ -83,69 +158,17 @@ class ObjectRenderAPI:
                 self.server_api.log(f"Error loading model {object_name}: {e}")
                 return
         
-        model_data = self.models_cache[object_name]
-        pixels = model_data.get("pixels", [])
-        # --- MODIFIED: Use grid_height/width and default size from the new JSON format ---
-        grid_height = model_data.get("grid_height", 16)
-        grid_width = model_data.get("grid_width", 16)
-        default_pixel_size = model_data.get("default_pixel_size", PIXEL_SIZE)
-        if not pixels: return
+        model_data = self.models_cache.get(object_name)
+        if model_data:
+            await self._render_object(username, plugin_name, model_data, targets)
 
-        websockets = [self.server_api.get_websocket_from_username(t) for t in targets or [] if self.server_api.get_websocket_from_username(t)]
-
-        if is_update:
-            existing_objects = self.rendered_objects[username][plugin_name]
-            for i, pixel in enumerate(pixels):
-                if i >= len(existing_objects): break # Safety check
-                obj_id = existing_objects[i]['id']
-                
-                pixel_grid_x = pixel['x']
-                if direction == 1:
-                    pixel_grid_x = (grid_width - 1) - pixel_grid_x
-
-                # --- MODIFIED: Use individual pixel properties for size and position ---
-                p_width = pixel.get('width', default_pixel_size)
-                p_height = pixel.get('height', default_pixel_size)
-                p_top = pixel.get('top', 0)
-                p_left = pixel.get('left', 0)
-
-                world_x = base_pos['x'] + (pixel_grid_x * PIXEL_SIZE) + p_left
-                world_y = (base_pos['y'] - grid_height * PIXEL_SIZE) + (pixel['y'] * PIXEL_SIZE) + p_top
-                
-                payload = f"{pixel['color_index']}|{int(world_x)}|{int(world_y)}|{int(p_width)}|{int(p_height)}|{obj_id}"
-                message = f"OBJECT_MODIFY|PLACERSERVER|{payload}"
-                if targets and websockets: await asyncio.gather(*[ws.send(message) for ws in websockets])
-                else: await self.server_api.broadcast(message)
-        else: # Create
-            await self.__clear_internal(username, plugin_name, targets)
-            rendered_objects_list = []
-            for pixel in pixels:
-                obj_id = self.next_object_id; self.next_object_id += 1
-                
-                pixel_grid_x = pixel['x']
-                if direction == 1:
-                    pixel_grid_x = (grid_width - 1) - pixel_grid_x
-                
-                # --- MODIFIED: Use individual pixel properties for size and position ---
-                p_width = pixel.get('width', default_pixel_size)
-                p_height = pixel.get('height', default_pixel_size)
-                p_top = pixel.get('top', 0)
-                p_left = pixel.get('left', 0)
-
-                world_x = base_pos['x'] + (pixel_grid_x * PIXEL_SIZE) + p_left
-                world_y = (base_pos['y'] - grid_height * PIXEL_SIZE) + (pixel['y'] * PIXEL_SIZE) + p_top
-
-                payload = f"{pixel['color_index']}|{int(world_x)}|{int(world_y)}|{int(p_width)}|{int(p_height)}|{obj_id}"
-                message = f"OBJECT|PLACERSERVER|{payload}"
-                if targets and websockets: await asyncio.gather(*[ws.send(message) for ws in websockets])
-                else: await self.server_api.broadcast(message)
-                rendered_objects_list.append({'id': obj_id})
-            
-            if username not in self.rendered_objects: self.rendered_objects[username] = {}
-            self.rendered_objects[username][plugin_name] = rendered_objects_list
-
-        if username not in self.last_rendered_states: self.last_rendered_states[username] = {}
-        self.last_rendered_states[username][plugin_name] = current_state
+    async def render_object_from_data(self, username: str, model_data: dict, targets: list = None):
+        """Renders an object attached to a player directly from a dictionary."""
+        plugin_name = self._get_caller_plugin_name()
+        if isinstance(model_data, dict):
+            await self._render_object(username, plugin_name, model_data, targets)
+        else:
+            self.server_api.log(f"ObjectRenderAPI Error from {plugin_name}: model_data must be a dictionary.")
 
 def on_load(server_api):
     global API_INSTANCE
@@ -183,4 +206,3 @@ async def on_disconnect(websocket, server_api):
 
 def on_unload(server_api):
     server_api.log("ObjectRenderAPI: Unloaded.")
-
